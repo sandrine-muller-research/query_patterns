@@ -14,8 +14,21 @@ from bmt import Toolkit
 
 NULL_NODE = "__NULL__"
 
-def generate_biolink_templates(bmt: Toolkit) -> pd.DataFrame:
-    """Generate Biolink class → predicate → class templates with optional aspects and NULL nodes"""
+import pandas as pd
+from bmt import Toolkit
+
+NULL_NODE = "__NULL__"
+
+def generate_biolink_templates(
+    bmt: Toolkit,
+    version: str | None = None
+) -> pd.DataFrame:
+    """
+    Generate all possible Biolink templates:
+      - Class → Predicate → Class
+      - with optional subject/object aspects (qualifiers)
+      - including NULL source/target nodes
+    """
 
     classes = list(bmt.get_all_classes())
     predicates = [e for e in bmt.get_all_elements() if bmt.is_predicate(e)]
@@ -23,66 +36,86 @@ def generate_biolink_templates(bmt: Toolkit) -> pd.DataFrame:
     templates = []
     template_counter = 0
 
-    print(f"Processing {len(classes)} Biolink classes")
+    print(f"Classes: {len(classes)}, predicates: {len(predicates)}")
 
     for src_class in classes + [NULL_NODE]:
-        try:
-            for pred in predicates:
-                pred_el = bmt.get_element(pred)
-                domain = getattr(pred_el, "domain", None)
+        for pred in predicates:
+            pred_el = bmt.get_element(pred)
 
-                # NULL source node bypasses domain checks
-                if src_class != NULL_NODE:
-                    if not domain:
-                        continue
-                    if src_class != domain and src_class not in bmt.get_descendants(domain):
-                        continue
+            # ---------- DOMAIN CHECK ----------
+            domain = getattr(pred_el, "domain", None)
 
-                # Range handling
-                range_class = getattr(pred_el, "range", None)
-                tgt_classes = []
+            # If predicate has a domain, enforce it (NULL bypasses)
+            if src_class != NULL_NODE and domain:
+                if (
+                    src_class != domain
+                    and src_class not in bmt.get_descendants(domain)
+                ):
+                    continue
 
-                if range_class:
-                    children = bmt.get_children(range_class)
-                    tgt_classes = children if children else [range_class]
-                else:
-                    tgt_classes = [NULL_NODE]
+            # ---------- RANGE HANDLING ----------
+            range_class = getattr(pred_el, "range", None)
 
-                tgt_classes = tgt_classes[:3]
+            if range_class:
+                tgt_classes = bmt.get_children(range_class)
+                if not tgt_classes:
+                    tgt_classes = [range_class]
+            else:
+                tgt_classes = [NULL_NODE]
 
-                # ---- ASPECT EXTRACTION ----
-                subj_aspects = [None]
-                obj_aspects = [None]
+            # Keep explosion under control
+            tgt_classes = tgt_classes[:5]
 
-                slots = getattr(pred_el, "slots", []) or []
+            # ---------- ASPECT EXTRACTION ----------
+            subj_aspects = [None]
+            obj_aspects = [None]
 
-                if "subject_aspect_qualifier" in slots:
-                    subj_aspects = bmt.get_children("biolink:GeneOrGeneProductAspect") or [None]
+            slots = getattr(pred_el, "slots", []) or []
 
-                if "object_aspect_qualifier" in slots:
-                    obj_aspects = bmt.get_children("biolink:GeneOrGeneProductAspect") or [None]
+            if "subject_aspect_qualifier" in slots:
+                subj_aspects = (
+                    bmt.get_children("biolink:GeneOrGeneProductAspect")
+                    or [None]
+                )
 
-                for tgt_class in tgt_classes:
-                    for src_aspect in subj_aspects:
-                        for tgt_aspect in obj_aspects:
-                            template_counter += 1
+            if "object_aspect_qualifier" in slots:
+                obj_aspects = (
+                    bmt.get_children("biolink:GeneOrGeneProductAspect")
+                    or [None]
+                )
 
-                            templates.append({
-                                "template_id": f"t{template_counter:04d}",
-                                "src_cat": None if src_class == NULL_NODE else src_class.replace("biolink:", ""),
-                                "src_aspect": None if not src_aspect else src_aspect.replace("biolink:", ""),
-                                "predicate": pred.replace("biolink:", ""),
-                                "tgt_cat": None if tgt_class == NULL_NODE else tgt_class.replace("biolink:", ""),
-                                "tgt_aspect": None if not tgt_aspect else tgt_aspect.replace("biolink:", ""),
-                            })
+            # ---------- TEMPLATE CREATION ----------
+            for tgt_class in tgt_classes:
+                for src_aspect in subj_aspects:
+                    for tgt_aspect in obj_aspects:
+                        template_counter += 1
 
-        except Exception:
-            continue
+                        templates.append({
+                            "template_id": f"t{template_counter:06d}",
+                            "src_cat": (
+                                None if src_class == NULL_NODE
+                                else src_class.replace("biolink:", "")
+                            ),
+                            "src_aspect": (
+                                None if not src_aspect
+                                else src_aspect.replace("biolink:", "")
+                            ),
+                            "predicate": pred.replace("biolink:", ""),
+                            "tgt_cat": (
+                                None if tgt_class == NULL_NODE
+                                else tgt_class.replace("biolink:", "")
+                            ),
+                            "tgt_aspect": (
+                                None if not tgt_aspect
+                                else tgt_aspect.replace("biolink:", "")
+                            ),
+                        })
 
     df = pd.DataFrame(templates).drop_duplicates()
-    print(f"Generated {len(df)} templates")
-    return df
 
+    print(f"Generated {len(df)} templates")
+
+    return df
 
 
 def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'biolink_templates_kgx'):
