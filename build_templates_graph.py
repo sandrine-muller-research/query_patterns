@@ -19,6 +19,11 @@ from bmt import Toolkit
 
 NULL_NODE = "__NULL__"
 
+import pandas as pd
+from bmt import Toolkit
+
+NULL_NODE = "__NULL__"
+
 def generate_biolink_templates(
     bmt: Toolkit,
     version: str | None = None
@@ -36,16 +41,12 @@ def generate_biolink_templates(
     templates = []
     template_counter = 0
 
-    print(f"Classes: {len(classes)}, predicates: {len(predicates)}")
-
     for src_class in classes + [NULL_NODE]:
         for pred in predicates:
             pred_el = bmt.get_element(pred)
 
-            # ---------- DOMAIN CHECK ----------
+            # ----- DOMAIN -----
             domain = getattr(pred_el, "domain", None)
-
-            # If predicate has a domain, enforce it (NULL bypasses)
             if src_class != NULL_NODE and domain:
                 if (
                     src_class != domain
@@ -53,9 +54,8 @@ def generate_biolink_templates(
                 ):
                     continue
 
-            # ---------- RANGE HANDLING ----------
+            # ----- RANGE -----
             range_class = getattr(pred_el, "range", None)
-
             if range_class:
                 tgt_classes = bmt.get_children(range_class)
                 if not tgt_classes:
@@ -63,10 +63,7 @@ def generate_biolink_templates(
             else:
                 tgt_classes = [NULL_NODE]
 
-            # Keep explosion under control
-            tgt_classes = tgt_classes[:5]
-
-            # ---------- ASPECT EXTRACTION ----------
+            # ----- ASPECTS -----
             subj_aspects = [None]
             obj_aspects = [None]
 
@@ -84,7 +81,7 @@ def generate_biolink_templates(
                     or [None]
                 )
 
-            # ---------- TEMPLATE CREATION ----------
+            # ----- TEMPLATES -----
             for tgt_class in tgt_classes:
                 for src_aspect in subj_aspects:
                     for tgt_aspect in obj_aspects:
@@ -111,11 +108,8 @@ def generate_biolink_templates(
                             ),
                         })
 
-    df = pd.DataFrame(templates).drop_duplicates()
+    return pd.DataFrame(templates).drop_duplicates()
 
-    print(f"Generated {len(df)} templates")
-
-    return df
 
 
 def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'biolink_templates_kgx'):
