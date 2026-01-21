@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+Generate Biolink Model first-order template graph in TSV + YAML formats
+"""
+
+import pandas as pd
+import yaml
+from bmt import Toolkit
+from pathlib import Path
+import os
+
+import pandas as pd
+from bmt import Toolkit
+
+NULL_NODE = "__NULL__"
+
+def generate_biolink_templates(bmt: Toolkit) -> pd.DataFrame:
+    """Generate Biolink class → predicate → class templates with optional aspects and NULL nodes"""
+
+    classes = list(bmt.get_all_classes())
+    predicates = [e for e in bmt.get_all_elements() if bmt.is_predicate(e)]
+
+    templates = []
+    template_counter = 0
+
+    print(f"Processing {len(classes)} Biolink classes")
+
+    for src_class in classes + [NULL_NODE]:
+        try:
+            for pred in predicates:
+                pred_el = bmt.get_element(pred)
+                domain = getattr(pred_el, "domain", None)
+
+                # NULL source node bypasses domain checks
+                if src_class != NULL_NODE:
+                    if not domain:
+                        continue
+                    if src_class != domain and src_class not in bmt.get_descendants(domain):
+                        continue
+
+                # Range handling
+                range_class = getattr(pred_el, "range", None)
+                tgt_classes = []
+
+                if range_class:
+                    children = bmt.get_children(range_class)
+                    tgt_classes = children if children else [range_class]
+                else:
+                    tgt_classes = [NULL_NODE]
+
+                tgt_classes = tgt_classes[:3]
+
+                # ---- ASPECT EXTRACTION ----
+                subj_aspects = [None]
+                obj_aspects = [None]
+
+                slots = getattr(pred_el, "slots", []) or []
+
+                if "subject_aspect_qualifier" in slots:
+                    subj_aspects = bmt.get_children("biolink:GeneOrGeneProductAspect") or [None]
+
+                if "object_aspect_qualifier" in slots:
+                    obj_aspects = bmt.get_children("biolink:GeneOrGeneProductAspect") or [None]
+
+                for tgt_class in tgt_classes:
+                    for src_aspect in subj_aspects:
+                        for tgt_aspect in obj_aspects:
+                            template_counter += 1
+
+                            templates.append({
+                                "template_id": f"t{template_counter:04d}",
+                                "src_cat": None if src_class == NULL_NODE else src_class.replace("biolink:", ""),
+                                "src_aspect": None if not src_aspect else src_aspect.replace("biolink:", ""),
+                                "predicate": pred.replace("biolink:", ""),
+                                "tgt_cat": None if tgt_class == NULL_NODE else tgt_class.replace("biolink:", ""),
+                                "tgt_aspect": None if not tgt_aspect else tgt_aspect.replace("biolink:", ""),
+                            })
+
+        except Exception:
+            continue
+
+    df = pd.DataFrame(templates).drop_duplicates()
+    print(f"Generated {len(df)} templates")
+    return df
+
+
+
+def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'biolink_templates_kgx'):
+    """Create KGX-format TSV files"""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Nodes
+    nodes = []
+    for _, row in templates_df.iterrows():
+        nodes.extend([
+            {'id': f"{row.src_cat}_{row.src_aspect}", 'name': row.src_cat, 'category': row.src_cat},
+            {'id': f"{row.tgt_cat}_{row.tgt_aspect}", 'name': row.tgt_cat, 'category': row.tgt_cat}
+        ])
+    
+    pd.DataFrame(nodes).drop_duplicates('id').to_csv(f'{output_dir}/nodes.tsv', sep='\t', index=False)
+    
+    # Edges
+    edges = []
+    for _, row in templates_df.iterrows():
+        edges.append({
+            'id': row.template_id,
+            'subject': f"{row.src_cat}_{row.src_aspect}",
+            'predicate': row.predicate,
+            'object': f"{row.tgt_cat}_{row.tgt_aspect}",
+            'template_id': row.template_id
+        })
+    
+    pd.DataFrame(edges).to_csv(f'{output_dir}/edges.tsv', sep='\t', index=False)
+    print(f"KGX TSVs: {output_dir}/")
+
+def generate_yml_spec(templates_df: pd.DataFrame, version: str = '3.0.6') -> dict:
+    """Generate YAML template specification"""
+    template_groups = {}
+    for _, row in templates_df.iterrows():
+        src = f"{row['src_cat']}:{row['src_aspect']}"
+        tgt = f"{row['tgt_cat']}:{row['tgt_aspect']}"
+        if src not in template_groups:
+            template_groups[src] = {}
+        template_groups[src][tgt] = {
+            'predicate': row['predicate'],
+            'template_id': row['template_id']
+        }
+    
+    return {
+        'version': version,
+        'biolink_model_version': version,
+        'total_templates': len(templates_df),
+        'templates': template_groups
+    }
+
+def main():
+    print("Generating Biolink templates graph...")
+    
+    bmt = Toolkit()
+    
+    templates_df = generate_biolink_templates(bmt)
+    templates_df.to_csv('biolink_templates.csv', index=False)
+    
+    create_kgx_tsv(templates_df)
+    
+    yml_spec = generate_yml_spec(templates_df)
+    with open('biolink_templates.yml', 'w') as f:
+        yaml.dump(yml_spec, f, sort_keys=False, indent=2, default_flow_style=False)
+    
+    print(f"""SUCCESS from Biolink:
+   • {len(templates_df)} templates → biolink_templates.csv
+   • KGX TSVs → biolink_templates_kgx/
+   • YAML spec → biolink_templates.yml""")
+
+if __name__ == "__main__":
+    main()
