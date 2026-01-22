@@ -8,9 +8,8 @@ import yaml
 from bmt import Toolkit
 from pathlib import Path
 import os
+import hashlib
 
-import pandas as pd
-from bmt import Toolkit
 
 NULL_NODE = "__NULL__"
 
@@ -39,7 +38,9 @@ def generate_biolink_templates(
     predicates = [e for e in bmt.get_all_elements() if bmt.is_predicate(e)]
 
     templates = []
-    template_counter = 0
+
+    def norm(x: str | None) -> str:
+        return "NULL" if x is None else x.strip().lower()
 
     for src_class in classes + [NULL_NODE]:
         for pred in predicates:
@@ -85,10 +86,43 @@ def generate_biolink_templates(
             for tgt_class in tgt_classes:
                 for src_aspect in subj_aspects:
                     for tgt_aspect in obj_aspects:
-                        template_counter += 1
+
+                        src_cat = (
+                            None if src_class == NULL_NODE
+                            else src_class.replace("biolink:", "")
+                        )
+                        tgt_cat = (
+                            None if tgt_class == NULL_NODE
+                            else tgt_class.replace("biolink:", "")
+                        )
+                        predicate = pred.replace("biolink:", "")
+
+                        src_aspect_norm = (
+                            None if not src_aspect
+                            else src_aspect.replace("biolink:", "")
+                        )
+                        tgt_aspect_norm = (
+                            None if not tgt_aspect
+                            else tgt_aspect.replace("biolink:", "")
+                        )
+
+                        # Canonical deterministic key
+                        template_key = "|".join(map(norm, [
+                            src_cat,
+                            predicate,
+                            tgt_cat,
+                            src_aspect_norm,
+                            tgt_aspect_norm
+                        ]))
+
+                        template_id = hashlib.sha1(
+                            template_key.encode("utf-8")
+                        ).hexdigest()
+
 
                         templates.append({
-                            "template_id": f"t{template_counter:06d}",
+                            
+                            "template_id": f"{template_id}",
                             "src_cat": (
                                 None if src_class == NULL_NODE
                                 else src_class.replace("biolink:", "")
@@ -130,11 +164,10 @@ def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'biolink_templa
     edges = []
     for _, row in templates_df.iterrows():
         edges.append({
-            'id': row.template_id,
+            'template_id': row.template_id,
             'subject': f"{row.src_cat}_{row.src_aspect}",
             'predicate': row.predicate,
-            'object': f"{row.tgt_cat}_{row.tgt_aspect}",
-            'template_id': row.template_id
+            'object': f"{row.tgt_cat}_{row.tgt_aspect}"
         })
     
     pd.DataFrame(edges).to_csv(f'{output_dir}/edges.tsv', sep='\t', index=False)
