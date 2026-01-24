@@ -146,7 +146,7 @@ def generate_biolink_templates(
 
 
 
-def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'biolink_templates_kgx'):
+def create_kgx_tsv(templates_df: pd.DataFrame, output_dir: str = 'data/biolink_templates_kgx'):
     """Create KGX-format TSV files"""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -199,12 +199,12 @@ def main():
     bmt = Toolkit()
     
     templates_df = generate_biolink_templates(bmt)
-    templates_df.to_csv('biolink_templates.csv', index=False)
+    templates_df.to_csv('data/biolink_templates.csv', index=False)
     
     create_kgx_tsv(templates_df)
     
     yml_spec = generate_yml_spec(templates_df)
-    with open('biolink_templates.yml', 'w') as f:
+    with open('data/biolink_templates.yml', 'w') as f:
         yaml.dump(yml_spec, f, sort_keys=False, indent=2, default_flow_style=False)
     
     print(f"""SUCCESS from Biolink:
